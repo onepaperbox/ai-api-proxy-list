@@ -1,6 +1,6 @@
 """
-Read ping_check.py results and update latency values in README.md,
-then sort and add emoji for unreachable sites.
+Update latency values in README.md for the 7-column format.
+Sorting: first by API Base URL latency, then by homepage latency.
 """
 import re
 import subprocess
@@ -9,31 +9,66 @@ import time
 import socket
 import urllib.request
 import urllib.error
+from pathlib import Path
 
-README_PATH = r"i:\Downloads\ai-api-proxy-list\README.md"
+README_PATH = Path(__file__).resolve().parent / "README.md"
 
 with open(README_PATH, "r", encoding="utf-8") as f:
     content = f.read()
 
-# Find table
-table_start = content.find("| 名称 | 官网 | 支持模型 | 官网延迟 |")
-table_end = content.find("\n\n## 📚", table_start)
+table_start = content.find("| # | 名称 | 官网 |")
+table_end = content.find("\n\n---\n\n## 📚", table_start)
+if table_end == -1:
+    table_end = content.find("\n\n## 📚", table_start)
+
 table_text = content[table_start:table_end]
 
 lines = table_text.split("\n")
-header = lines[0] + "\n" + lines[1]
 
-# Parse all data rows
-data_lines = []
-for line in lines[2:]:
-    if line.strip() and line.startswith("|"):
-        data_lines.append(line)
+row_re = re.compile(
+    r"^\|\s*(\d+)\s*\|\s*(.*?)\s*\|\s*\[([^\]]+)\]\((https?://[^)]+)\)\s*"
+    r"\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|$",
+    re.MULTILINE,
+)
 
-print(f"Found {len(data_lines)} rows to test")
+old_row_re = re.compile(
+    r"^\|\s*(\d+)\s*\|\s*(.*?)\s*\|\s*\[([^\]]+)\]\((https?://[^)]+)\)\s*"
+    r"\|\s*(.*?)\s*\|\s*(.*?)\s*\|$",
+    re.MULTILINE,
+)
+
+providers = []
+for match in row_re.finditer(table_text):
+    providers.append({
+        "index": int(match.group(1)),
+        "name": match.group(2).strip(),
+        "domain": match.group(3).strip(),
+        "homepage": match.group(4).strip(),
+        "models": match.group(5).strip(),
+        "api_url": match.group(6).strip(),
+        "api_latency": match.group(7).strip(),
+        "latency": match.group(8).strip(),
+    })
+
+is_new_format = len(providers) > 0
+
+if not providers:
+    for match in old_row_re.finditer(table_text):
+        providers.append({
+            "index": int(match.group(1)),
+            "name": match.group(2).strip(),
+            "domain": match.group(3).strip(),
+            "homepage": match.group(4).strip(),
+            "models": match.group(5).strip(),
+            "api_url": "待确认",
+            "api_latency": "-",
+            "latency": match.group(6).strip(),
+        })
+
+print(f"Found {len(providers)} rows to test")
 
 def test_domain(domain):
     """Test domain using ping, TCP, and HTTP."""
-    # Method 1: Ping
     try:
         param = "-n" if platform.system().lower() == "windows" else "-c"
         timeout_param = "-w" if platform.system().lower() == "windows" else "-W"
@@ -53,7 +88,6 @@ def test_domain(domain):
     except:
         pass
 
-    # Method 2: TCP connect to 443
     try:
         start = time.time()
         sock = socket.create_connection((domain, 443), timeout=5)
@@ -63,7 +97,6 @@ def test_domain(domain):
     except:
         pass
 
-    # Method 3: TCP connect to 80
     try:
         start = time.time()
         sock = socket.create_connection((domain, 80), timeout=5)
@@ -73,7 +106,6 @@ def test_domain(domain):
     except:
         pass
 
-    # Method 4: HTTP request
     for scheme in ['https', 'http']:
         try:
             start = time.time()
@@ -91,23 +123,11 @@ def test_domain(domain):
     return None, False
 
 
-# Process each row: extract domain, test it, update latency
-import ssl
-new_lines = []
-for i, line in enumerate(data_lines):
-    # Extract domain from markdown link
-    m = re.search(r'\[([^\]]+)\]\(https?://([^\)]+)\)', line)
-    if not m:
-        new_lines.append(line)
-        continue
+new_providers = []
+for i, p in enumerate(providers):
+    domain = p['domain'].split('/')[0].replace('www.', '')
     
-    link_text = m.group(1)
-    full_url = m.group(2)
-    domain = full_url.split('/')[0].replace('www.', '')
-    
-    name_part = line.split(" | ")[0]
-    # Clean name (remove ❌ if present)
-    name_clean = name_part.lstrip("| ").strip()
+    name_clean = p['name'].lstrip("❌ ").strip()
     while name_clean.startswith("❌"):
         name_clean = name_clean[1:].strip()
     
@@ -115,57 +135,59 @@ for i, line in enumerate(data_lines):
     
     if latency is not None:
         latency_str = f"{latency}ms"
-        # Rebuild the row
-        parts = line.strip().split(" | ")
-        if len(parts) >= 4:
-            # Reconstruct with clean name and new latency
-            link_and_models = " | ".join(parts[1:-1])
-            new_line = f"| {name_clean} | {link_and_models} | {latency_str} |"
-            new_lines.append(new_line)
-            status = "✅"
-        else:
-            new_lines.append(line)
-            status = "?"
+        status = "✅"
     else:
-        # Unreachable
-        parts = line.strip().split(" | ")
-        if len(parts) >= 4:
-            link_and_models = " | ".join(parts[1:-1])
-            new_line = f"| ❌ {name_clean} | {link_and_models} | 超时 |"
-            new_lines.append(new_line)
-            status = "❌"
-        else:
-            new_lines.append(line)
-            status = "?"
+        latency_str = "超时"
+        name_clean = f"❌ {name_clean}"
+        status = "❌"
     
-    print(f"{i+1:3d}. {status} {name_clean:<30s} {domain:<35s} {latency if latency else '超时'}ms" + (" " if latency else ""))
+    p['name'] = name_clean
+    p['latency'] = latency_str
+    new_providers.append(p)
+    
+    print(f"{i+1:3d}. {status} {name_clean:<30s} {domain:<35s} {latency if latency else '超时'}ms")
     time.sleep(0.05)
 
 
-# Sort: timed-out entries at bottom, then by latency ascending
-def sort_key(line):
-    parts = line.strip().split(" | ")
-    if len(parts) < 4:
-        return (2, 99999)
-    latency_str = parts[-1].rstrip("|").strip()
-    name = parts[0].lstrip("| ❌").strip()
-    if latency_str == "超时":
-        return (1, 99999, name)
-    try:
-        ms = int(latency_str.replace("ms", ""))
-        return (0, ms, name)
-    except:
-        return (2, 99999, name)
+def sort_key(p):
+    api_latency_val = 999999
+    if p['api_latency'] and p['api_latency'] != "-" and p['api_latency'] != "未知":
+        try:
+            api_latency_val = int(p['api_latency'].replace("ms", ""))
+        except ValueError:
+            pass
 
-data_lines_sorted = sorted(new_lines, key=sort_key)
+    latency_val = 999999
+    if p['latency'] and p['latency'] != "超时" and p['latency'] != "-":
+        try:
+            latency_val = int(p['latency'].replace("ms", ""))
+        except ValueError:
+            pass
 
-# Build new table
-new_table = header + "\n" + "\n".join(data_lines_sorted)
+    api_priority = 0 if api_latency_val < 999999 else 1
+    homepage_priority = 0 if latency_val < 999999 else 1
 
-# Replace in content
-new_content = content.replace(table_text, new_table)
+    return (api_priority, api_latency_val, homepage_priority, latency_val, p['name'].lower())
+
+
+providers_sorted = sorted(new_providers, key=sort_key)
+
+
+header = "| # | 名称 | 官网 | 支持模型 | Base URL | API延迟 | 官网延迟 |"
+align = "|:---:|:---|:---|:---|:---|:---:|:---:|"
+new_lines = [header, align]
+
+for i, p in enumerate(providers_sorted, 1):
+    line = (
+        f"| {i} | {p['name']} | [{p['domain']}]({p['homepage']}) | "
+        f"{p['models']} | {p['api_url']} | {p['api_latency']} | {p['latency']} |"
+    )
+    new_lines.append(line)
+
+new_table = "\n".join(new_lines)
+new_content = content[:table_start] + new_table + content[table_end:]
 
 with open(README_PATH, "w", encoding="utf-8") as f:
     f.write(new_content)
 
-print(f"\n✅ Updated {len(new_lines)} entries. Table sorted with ❌ for unreachable sites.")
+print(f"\nUpdated {len(new_providers)} entries. Sorted by API latency first, then homepage latency.")

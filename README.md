@@ -213,6 +213,7 @@
 | 179 | AI Hub | [aihub-global.com](https://aihub-global.com) | 多模型 | 1197ms |
 | 180 | 酸枝云 | [suanzhi.cloud](https://suanzhi.cloud) | 多模型 | 1204ms |
 | 181 | BMCCA | [cca.maya.today](https://cca.maya.today) | 多模型 | 1309ms |
+| 182 | Easy Router | [easyrouter.io](https://easyrouter.io) | 多模型 | 1460ms |
 
 ## 📚 数据来源
 
